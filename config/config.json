@@ -1,0 +1,7 @@
+{
+  "system": {
+    "name": "IoT Smart Ware House",
+    "version": "1.0.0",
+    "log_level": "DEBUG"
+  }
+}
