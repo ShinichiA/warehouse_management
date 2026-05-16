@@ -6,6 +6,8 @@
 #include "protocols/mqtt/interface/i_mqtt_client.h"
 #include "sensors/interface/i_sensor.h"
 #include "protocols/modbus/modbus_rtu.h"
+#include "protocols/http/warehouse_api_service.h"
+
 
 namespace iot {
 
@@ -45,6 +47,7 @@ private:
     
     std::shared_ptr<ModbusRTU> modbus_;
     std::shared_ptr<IMqttClient> mqtt_;
+    std::shared_ptr<protocols::http::WarehouseApiService> api_;
     std::vector<std::shared_ptr<ISensor>> sensors_;
     
     std::thread workerThread_;

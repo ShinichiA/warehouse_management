@@ -4,6 +4,7 @@
 #include "sensors/SHT35.h"
 #include "utils/helper.h"
 #include "utils/logger.h"
+#include "protocols/http/warehouse_api_service.h"
 
 namespace iot {
 
@@ -39,6 +40,10 @@ bool App::initialize(const char *configPath) {
         LOG_WARNING("MQTT Broker not found. Will retry later.");
     }
 
+    // 4. Setup HTTP API Client
+    api_ = std::make_shared<protocols::http::WarehouseApiService>("http://localhost:8002");
+    LOG_INFO("HTTP API Client initialized with base URL: http://localhost:8002");
+    auto res = api_->getLicenseInfo("d97dff02-2bc7-4d36-a163-70edc82e4697");
     this->initialized_ = true;
     return true;
 }
@@ -78,7 +83,16 @@ void App::workerTask() const {
                                                      sensor->getName().c_str(), 
                                                      r.unit.name.c_str());
                     mqtt_->publish(topic, payload, 1, false);
-                    LOG_DEBUG(utils::format("Published: %s", payload.c_str()));
+                    LOG_DEBUG(utils::format("MQTT Published: %s", payload.c_str()));
+
+                    // Also send via HTTP API
+                    nlohmann::json jsonPayload = nlohmann::json::parse(payload);
+                    auto resp = api_->sendSensorData(jsonPayload);
+                    if (resp.status_code == 200 || resp.status_code == 201) {
+                        LOG_DEBUG("HTTP API: Data sent successfully.");
+                    } else {
+                        LOG_WARNING(utils::format("HTTP API Error: %ld - %s", resp.status_code, resp.error.c_str()));
+                    }
                 }
             }
         }

@@ -3,6 +3,8 @@
   "version-string": "1.0.0",
   "dependencies": [
     "libmodbus",
-    "mosquitto"
+    "mosquitto",
+    "curl",
+    "nlohmann-json"
   ]
 }
