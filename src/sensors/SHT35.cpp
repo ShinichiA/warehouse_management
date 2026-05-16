@@ -7,8 +7,13 @@
 
 namespace iot {
 
-SHT35::SHT35(std::shared_ptr<ModbusRTU> modbus, int slaveId, std::vector<RegisterConfig> configs)
-    : modbus_(std::move(modbus)), configs_(std::move(configs)), slaveId_(slaveId) {}
+const std::vector<RegisterConfig> SHT35::DEFAULT_CONFIGS = {
+    {0, DataType::INT16, UnitType::CELSIUS, 0.1f},  // Addr 0: Temp
+    {1, DataType::INT16, UnitType::HUMIDITY, 0.1f} // Addr 1: Hum
+};
+
+SHT35::SHT35(std::shared_ptr<ModbusRTU> modbus, int slaveId)
+    : modbus_(std::move(modbus)), slaveId_(slaveId) {}
 
 bool SHT35::initialize() {
     if (!modbus_) {
@@ -16,16 +21,12 @@ bool SHT35::initialize() {
         return false;
     }
 
-    if (configs_.empty()) {
-        LOG_WARNING("SHT35: No register configurations provided.");
-        return true;
-    }
 
     // Calculate the range of registers to read in one go
     uint16_t minAddr = 0xFFFF;
     uint16_t maxAddr = 0;
 
-    for (const auto& c : configs_) {
+    for (const auto& c : DEFAULT_CONFIGS) {
         if (c.address < minAddr) minAddr = c.address;
         
         uint16_t endAddr = c.address;
@@ -53,7 +54,7 @@ std::vector<Reading> SHT35::readAll() {
 
     std::vector<uint16_t> buffer(totalRegisters_);
     if (modbus_->readHoldingRegisters(slaveId_, startAddress_, totalRegisters_, buffer.data())) {
-        for (const auto& c : configs_) {
+        for (const auto& c : DEFAULT_CONFIGS) {
             size_t offset = c.address - startAddress_;
             float raw_val = 0;
 

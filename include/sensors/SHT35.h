@@ -11,12 +11,11 @@ namespace iot {
 class SHT35 : public ISensor {
 public:
     /**
-     * @brief Construct a new SHT35 sensor.
+     * @brief Construct a new SHT35 sensor with fixed register mapping.
      * @param modbus Shared Modbus RTU master instance.
      * @param slaveId Modbus slave ID of the sensor.
-     * @param configs Mapping of registers to value types.
      */
-    SHT35(std::shared_ptr<ModbusRTU> modbus, int slaveId, std::vector<RegisterConfig> configs);
+    SHT35(std::shared_ptr<ModbusRTU> modbus, int slaveId);
     
     ~SHT35() override = default;
 
@@ -38,12 +37,16 @@ public:
     [[nodiscard]] std::string getName() const override;
 
 private:
+    /**
+     * @brief Default register mapping for SHT35.
+     */
+    static const std::vector<RegisterConfig> DEFAULT_CONFIGS;
+
     std::shared_ptr<ModbusRTU> modbus_;
-    std::vector<RegisterConfig> configs_;
     int slaveId_;
 
     uint16_t startAddress_ = 0;
-    uint16_t totalRegisters_ = 16;
+    uint16_t totalRegisters_ = 0;
 };
 
 } // namespace iot

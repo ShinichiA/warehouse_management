@@ -25,21 +25,8 @@ bool App::initialize(const char *configPath) {
     }
 
     // 2. Setup multiple sensors
-    // In a real app, this part would read from config/config.json
-    
-    // Sensor 1: Reading Temperature (INT16, addr 0) and Humidity (INT16, addr 1)
-    std::vector<RegisterConfig> config1 = {
-        {0, DataType::INT16, UnitType::CELSIUS, 0.1f},
-        {1, DataType::INT16, UnitType::HUMIDITY, 0.1f}
-    };
-    auto s1 = std::make_shared<SHT35>(modbus_, 1, config1);
-
-    // Sensor 2: Reading Temperature (FLOAT, addr 10) and Pressure (INT32, addr 20)
-    std::vector<RegisterConfig> config2 = {
-        {10, DataType::FLOAT, UnitType::CELSIUS, 1.0f},
-        {20, DataType::INT32, UnitType::PRESSURE, 1.0f}
-    };
-    auto s2 = std::make_shared<SHT35>(modbus_, 2, config2);
+    auto s1 = std::make_shared<SHT35>(modbus_, 1); // Use default config
+    auto s2 = std::make_shared<SHT35>(modbus_, 2); // Use default config
 
     if (s1->initialize()) sensors_.push_back(s1);
     if (s2->initialize()) sensors_.push_back(s2);
