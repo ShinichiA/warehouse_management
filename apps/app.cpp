@@ -103,53 +103,127 @@ void App::run(int maxSensorCycles) {
         return;
     }
 
-    LOG_INFO("Starting background worker thread...");
+    LOG_INFO("Starting background threads (API Sync, Modbus Poll, Data Push)...");
     running_ = true;
-    workerThread_ = std::thread(&App::workerTask, this);
+    
+    // Launch three dedicated background threads
+    apiSyncThread_ = std::thread(&App::apiSyncTask, this);
+    modbusPollThread_ = std::thread(&App::modbusPollTask, this);
+    dataPushThread_ = std::thread(&App::dataPushTask, this);
 }
 
-void App::workerTask() const {
-    LOG_INFO("Worker thread started.");
+void App::apiSyncTask() const {
+    LOG_INFO("API Sync Thread started.");
 
     while (running_) {
-        if (!mqtt_->isConnected()) {
-            mqtt_->connect(mqttHost_, mqttPort_, mqttKeepAlive_);
+        LOG_INFO("API Sync: Synchronizing configurations from server...");
+
+        // 1. Get License info
+        auto licenseResp = api_->getLicenseInfo("d97dff02-2bc7-4d36-a163-70edc82e4697");
+        if (licenseResp.status_code == 200) {
+            LOG_DEBUG("API Sync: License synchronized.");
+        } else {
+            LOG_WARNING(utils::format("API Sync: Failed to fetch license info (HTTP %ld)", licenseResp.status_code));
         }
 
+        // 2. List registered sensors
+        auto sensorsResp = api_->listSensors();
+        if (sensorsResp.status_code == 200) {
+            LOG_DEBUG("API Sync: Sensors list synchronized.");
+        }
+
+        // 3. Get Local Room info
+        auto roomResp = api_->getLocalRoom();
+        if (roomResp.status_code == 200) {
+            LOG_DEBUG("API Sync: Room config synchronized.");
+        }
+
+        // Sleep for 15 seconds to simulate regular background sync
+        for (int i = 0; i < 15 && running_; ++i) {
+            utils::sleep_sec(1);
+        }
+    }
+    LOG_INFO("API Sync Thread stopping...");
+}
+
+void App::modbusPollTask() {
+    LOG_INFO("Modbus Polling Thread started.");
+
+    while (running_) {
         // Loop through all registered sensors
         for (const auto& sensor : sensors_) {
+            if (!running_) break;
+
+            LOG_DEBUG("Modbus Poll: Reading from sensor: " + sensor->getName());
             auto readings = sensor->readAll();
             
-            if (mqtt_->isConnected()) {
-                for (const auto& r : readings) {
-                    std::string payload = utils::format(
-                        R"({"sensor": "%s", "type": "%s", "value": %.2f, "unit": "%s"})",
-                        sensor->getName().c_str(), r.unit.name.c_str(), r.value, r.unit.symbol.c_str()
-                    );
-                    
-                    // Publish each reading to its own topic
-                    std::string topic = utils::format("%s/%s/%s",
-                                                     mqttTopicPrefix_.c_str(),
-                                                     sensor->getName().c_str(), 
-                                                     r.unit.name.c_str());
-                    mqtt_->publish(topic, payload, 1, false);
-                    LOG_DEBUG(utils::format("MQTT Published: %s", payload.c_str()));
-
-                    // Also send via HTTP API
-                    nlohmann::json jsonPayload = nlohmann::json::parse(payload);
-                    auto resp = api_->sendSensorData(jsonPayload);
-                    if (resp.status_code == 200 || resp.status_code == 201) {
-                        LOG_DEBUG("HTTP API: Data sent successfully.");
-                    } else {
-                        LOG_WARNING(utils::format("HTTP API Error: %ld - %s", resp.status_code, resp.error.c_str()));
-                    }
-                }
+            for (const auto& r : readings) {
+                SensorReadingPackage pkg{
+                    sensor->getName(),
+                    r.unit.name,
+                    r.unit.symbol,
+                    r.value
+                };
+                sensorDataQueue_.send(std::move(pkg));
+                LOG_DEBUG(utils::format("Modbus Poll: Enqueued reading from %s (Value: %.2f)", 
+                                         sensor->getName().c_str(), r.value));
             }
         }
 
-        utils::sleep_ms(5000); // Interval for all sensors
+        // Poll interval: every 2 seconds
+        for (int i = 0; i < 2 && running_; ++i) {
+            utils::sleep_sec(1);
+        }
     }
-    LOG_INFO("Worker thread stopping...");
+    LOG_INFO("Modbus Polling Thread stopping...");
+}
+
+void App::dataPushTask() {
+    LOG_INFO("Data Pushing Thread started.");
+
+    while (running_) {
+        SensorReadingPackage pkg;
+        // Blocks for 100ms or until an item is available
+        if (sensorDataQueue_.receive(pkg, 100)) {
+            // Reconnect to MQTT if needed
+            if (!mqtt_->isConnected()) {
+                mqtt_->connect(mqttHost_, mqttPort_, mqttKeepAlive_);
+            }
+
+            // Construct payload and topics
+            std::string payload = utils::format(
+                R"({"sensor": "%s", "type": "%s", "value": %.2f, "unit": "%s"})",
+                pkg.sensorName.c_str(), pkg.typeName.c_str(), pkg.value, pkg.unitSymbol.c_str()
+            );
+
+            std::string topic = utils::format("%s/%s/%s",
+                                             mqttTopicPrefix_.c_str(),
+                                             pkg.sensorName.c_str(), 
+                                             pkg.typeName.c_str());
+
+            // 1. Publish to MQTT
+            if (mqtt_->isConnected()) {
+                mqtt_->publish(topic, payload, 1, false);
+                LOG_DEBUG(utils::format("Data Push (MQTT): Published to topic '%s': %s", topic.c_str(), payload.c_str()));
+            } else {
+                LOG_WARNING("Data Push (MQTT): Broker disconnected. Unable to publish.");
+            }
+
+            // 2. Publish to HTTP API
+            try {
+                nlohmann::json jsonPayload = nlohmann::json::parse(payload);
+                auto resp = api_->sendSensorData(jsonPayload);
+                if (resp.status_code == 200 || resp.status_code == 201) {
+                    LOG_DEBUG("Data Push (HTTP): Sent successfully.");
+                } else {
+                    LOG_WARNING(utils::format("Data Push (HTTP) Error: %ld - %s", resp.status_code, resp.error.c_str()));
+                }
+            } catch (const std::exception& ex) {
+                LOG_ERROR(utils::format("Data Push (HTTP): Payload parsing error: %s", ex.what()));
+            }
+        }
+    }
+    LOG_INFO("Data Pushing Thread stopping...");
 }
 
 void App::printBanner() {
@@ -160,10 +234,18 @@ void App::printBanner() {
 
 void App::shutdown() {
     if (running_) {
-        LOG_INFO("Stopping worker thread...");
+        LOG_INFO("Stopping background threads...");
         running_ = false;
-        if (workerThread_.joinable()) {
-            workerThread_.join();
+
+        // Join threads safely
+        if (apiSyncThread_.joinable()) {
+            apiSyncThread_.join();
+        }
+        if (modbusPollThread_.joinable()) {
+            modbusPollThread_.join();
+        }
+        if (dataPushThread_.joinable()) {
+            dataPushThread_.join();
         }
     }
 
