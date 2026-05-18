@@ -3,6 +3,7 @@
 #include <memory>
 #include <thread>
 #include <vector>
+#include <string>
 #include "protocols/mqtt/interface/i_mqtt_client.h"
 #include "sensors/interface/i_sensor.h"
 #include "protocols/modbus/modbus_rtu.h"
@@ -49,6 +50,18 @@ private:
     std::shared_ptr<IMqttClient> mqtt_;
     std::shared_ptr<protocols::http::WarehouseApiService> api_;
     std::vector<std::shared_ptr<ISensor>> sensors_;
+
+    std::string mqttClientId_{"iot_warehouse_gate"};
+    std::string mqttHost_{"localhost"};
+    int mqttPort_{1883};
+    int mqttKeepAlive_{60};
+    std::string mqttTopicPrefix_{"warehouse/sensors"};
+    std::string apiBaseUrl_{"http://localhost:8002"};
+    std::string modbusDevice_{"/dev/ttyACM0"};
+    int modbusBaudRate_{9600};
+    char modbusParity_{'N'};
+    int modbusDataBits_{8};
+    int modbusStopBits_{1};
     
     std::thread workerThread_;
 };

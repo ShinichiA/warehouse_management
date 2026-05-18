@@ -2,6 +2,28 @@
   "system": {
     "name": "IoT Smart Ware House",
     "version": "1.0.0",
-    "log_level": "DEBUG"
+    "log_enabled": {
+      "debug": true,
+      "info": true,
+      "warning": true,
+      "error": true
+    }
+  },
+  "modbus": {
+    "device": "/dev/ttyACM0",
+    "baud_rate": 9600,
+    "parity": "N",
+    "data_bits": 8,
+    "stop_bits": 1
+  },
+  "mqtt": {
+    "client_id": "iot_warehouse_gate",
+    "host": "localhost",
+    "port": 1883,
+    "keep_alive": 60,
+    "topic_prefix": "warehouse/sensors"
+  },
+  "api": {
+    "base_url": "http://localhost:8002"
   }
 }

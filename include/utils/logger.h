@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <array>
 
 namespace iot {
 
@@ -40,6 +41,9 @@ public:
      */
     void log(const LogLevel level, const std::string& message, const char* file, const int line) {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!enabledLevels_[levelToIndex(level)]) {
+            return;
+        }
 
         const auto now = std::chrono::system_clock::now();
         const auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -55,6 +59,11 @@ public:
                   << message << std::endl;
     }
 
+    void setLevelEnabled(const LogLevel level, const bool enabled) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        enabledLevels_[levelToIndex(level)] = enabled;
+    }
+
     Logger() = default;
     ~Logger() = default;
     Logger(const Logger&) = delete;
@@ -62,6 +71,7 @@ public:
 
 private:
     std::mutex mutex_;
+    std::array<bool, 4> enabledLevels_{true, true, true, true};
 
     /**
      * @brief Convert LogLevel enum to a string representation.
@@ -74,6 +84,10 @@ private:
             case LogLevel::ERROR:   return "ERROR";
             default:                return "UNKNOWN";
         }
+    }
+
+    static std::size_t levelToIndex(const LogLevel level) {
+        return static_cast<std::size_t>(level);
     }
 };
 

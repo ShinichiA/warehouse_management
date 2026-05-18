@@ -5,6 +5,8 @@
 #include "utils/helper.h"
 #include "utils/logger.h"
 #include "protocols/http/warehouse_api_service.h"
+#include "external/nlohmann/json.hpp"
+#include <fstream>
 
 namespace iot {
 
@@ -18,10 +20,57 @@ bool App::initialize(const char *configPath) {
     printBanner();
     LOG_INFO("Initializing application subsystems...");
 
+    // Load runtime configuration
+    try {
+        std::ifstream configFile(configPath);
+        if (configFile.is_open()) {
+            nlohmann::json cfg = nlohmann::json::parse(configFile, nullptr, true, true);
+
+            if (cfg.contains("modbus")) {
+                const auto& modbusCfg = cfg["modbus"];
+                modbusDevice_ = modbusCfg.value("device", modbusDevice_);
+                modbusBaudRate_ = modbusCfg.value("baud_rate", modbusBaudRate_);
+                const auto parity = modbusCfg.value("parity", std::string(1, modbusParity_));
+                if (!parity.empty()) {
+                    modbusParity_ = parity[0];
+                }
+                modbusDataBits_ = modbusCfg.value("data_bits", modbusDataBits_);
+                modbusStopBits_ = modbusCfg.value("stop_bits", modbusStopBits_);
+            }
+
+            if (cfg.contains("mqtt")) {
+                const auto& mqttCfg = cfg["mqtt"];
+                mqttClientId_ = mqttCfg.value("client_id", mqttClientId_);
+                mqttHost_ = mqttCfg.value("host", mqttHost_);
+                mqttPort_ = mqttCfg.value("port", mqttPort_);
+                mqttKeepAlive_ = mqttCfg.value("keep_alive", mqttKeepAlive_);
+                mqttTopicPrefix_ = mqttCfg.value("topic_prefix", mqttTopicPrefix_);
+            }
+
+            if (cfg.contains("api")) {
+                const auto& apiCfg = cfg["api"];
+                apiBaseUrl_ = apiCfg.value("base_url", apiBaseUrl_);
+            }
+
+            if (cfg.contains("system") && cfg["system"].contains("log_enabled")) {
+                const auto& logEnabled = cfg["system"]["log_enabled"];
+                Logger::getInstance().setLevelEnabled(LogLevel::DEBUG, logEnabled.value("debug", true));
+                Logger::getInstance().setLevelEnabled(LogLevel::INFO, logEnabled.value("info", true));
+                Logger::getInstance().setLevelEnabled(LogLevel::WARNING, logEnabled.value("warning", true));
+                Logger::getInstance().setLevelEnabled(LogLevel::ERROR, logEnabled.value("error", true));
+            }
+        } else {
+            LOG_WARNING(utils::format("Config file not found: %s. Using defaults.", configPath));
+        }
+    } catch (const std::exception& ex) {
+        LOG_ERROR(utils::format("Invalid config file: %s. Error: %s. Exiting.", configPath, ex.what()));
+        return false;
+    }
+
     // 1. Setup Modbus
-    modbus_ = std::make_shared<ModbusRTU>("/dev/ttyACM0", 9600, 'N', 8, 1);
+    modbus_ = std::make_shared<ModbusRTU>(modbusDevice_, modbusBaudRate_, modbusParity_, modbusDataBits_, modbusStopBits_);
     if (!modbus_->connect()) {
-        LOG_ERROR("Failed to initialize Modbus on /dev/ttyACM0");
+        LOG_ERROR("Failed to initialize Modbus on " + modbusDevice_);
         return false;
     }
 
@@ -35,14 +84,14 @@ bool App::initialize(const char *configPath) {
     LOG_INFO("Registered " + std::to_string(sensors_.size()) + " sensors.");
 
     // 3. Setup MQTT
-    mqtt_ = std::make_shared<MosquittoClient>("iot_warehouse_gate");
-    if (!mqtt_->connect("localhost", 1883, 60)) {
+    mqtt_ = std::make_shared<MosquittoClient>(mqttClientId_);
+    if (!mqtt_->connect(mqttHost_, mqttPort_, mqttKeepAlive_)) {
         LOG_WARNING("MQTT Broker not found. Will retry later.");
     }
 
     // 4. Setup HTTP API Client
-    api_ = std::make_shared<protocols::http::WarehouseApiService>("http://localhost:8002");
-    LOG_INFO("HTTP API Client initialized with base URL: http://localhost:8002");
+    api_ = std::make_shared<protocols::http::WarehouseApiService>(apiBaseUrl_);
+    LOG_INFO("HTTP API Client initialized with base URL: " + apiBaseUrl_);
     auto res = api_->getLicenseInfo("d97dff02-2bc7-4d36-a163-70edc82e4697");
     this->initialized_ = true;
     return true;
@@ -64,7 +113,7 @@ void App::workerTask() const {
 
     while (running_) {
         if (!mqtt_->isConnected()) {
-            mqtt_->connect("localhost", 1883, 60);
+            mqtt_->connect(mqttHost_, mqttPort_, mqttKeepAlive_);
         }
 
         // Loop through all registered sensors
@@ -79,7 +128,8 @@ void App::workerTask() const {
                     );
                     
                     // Publish each reading to its own topic
-                    std::string topic = utils::format("warehouse/sensors/%s/%s", 
+                    std::string topic = utils::format("%s/%s/%s",
+                                                     mqttTopicPrefix_.c_str(),
                                                      sensor->getName().c_str(), 
                                                      r.unit.name.c_str());
                     mqtt_->publish(topic, payload, 1, false);
